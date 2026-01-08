@@ -248,7 +248,7 @@ jobs:
     env:
       REPO_OWNER: ShirkNeko
       REPO_NAME: GKI_KernelSU_SUSFS
-      GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.MY_GKI_TOKEN }}
       RELEASE_NAME: "GKI Kernel: ${{ inputs.kernelsu_variant == 'Next' && 'KernelSU-' || '' }} ${{ inputs.kernelsu_variant }}"
       INITIAL_RELEASE_NOTES: |
         This release includes **${{ inputs.kernelsu_variant == 'Next' && 'KernelSU' || '' }}${{ inputs.kernelsu_variant }}**
@@ -293,51 +293,62 @@ jobs:
             sudo apt install -y gh
           }
           
-      - name: Generate and Create New Tag (Atomic)
+      - name: Generate and Create New Tag (Atomic with Retry)
         if: ${{ steps.release_check.outcome == 'success' }}
         env:
-          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_GKI_TOKEN }}
         run: |
           set -e
 
           BASE_VERSION="v2.0.0"
+          MAX_RETRIES=5
+          RETRY_COUNT=0
           
-          # Fetch all existing tags using git ls-remote
-          EXISTING_TAGS=$(git ls-remote --tags https://github.com/$REPO_OWNER/$REPO_NAME.git | awk '{print $2}' | sed 's/refs\/tags\///' || true)
-
-          # Find highest revision number for this base version
-          MAX_REVISION=0
-          while IFS= read -r tag; do
-            if [[ "$tag" =~ ^$BASE_VERSION-r([0-9]+)$ ]]; then
-              revision="${BASH_REMATCH[1]}"
-              if (( revision > MAX_REVISION )); then
-                MAX_REVISION=$revision
-              fi
-            fi
-          done <<< "$EXISTING_TAGS"
-
-          # Generate new revision number and tag
-          NEW_REVISION=$((MAX_REVISION + 1))
-          NEW_TAG="$BASE_VERSION-r$NEW_REVISION"
-
-          echo "New tag generated: $NEW_TAG"
-          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
-
-          # Optional: Check if tag already exists in remote
-          if git ls-remote --exit-code --tags origin "$NEW_TAG" > /dev/null 2>&1; then
-            echo "::error::Tag '$NEW_TAG' already exists in remote repository. Aborting."
-            exit 1
-          fi
-
-          # Configure Git
+          # Configure Git first
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES"
+            
+            # Fetch all existing tags using git ls-remote (always get fresh data)
+            EXISTING_TAGS=$(git ls-remote --tags https://github.com/$REPO_OWNER/$REPO_NAME.git | awk '{print $2}' | sed 's/refs\/tags\///' | sed 's/\^{}$//' || true)
 
-          # Create and push new tag
-          git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-          git push origin "$NEW_TAG"
+            # Find highest revision number for this base version
+            MAX_REVISION=0
+            while IFS= read -r tag; do
+              if [[ "$tag" =~ ^$BASE_VERSION-r([0-9]+)$ ]]; then
+                revision="${BASH_REMATCH[1]}"
+                if (( revision > MAX_REVISION )); then
+                  MAX_REVISION=$revision
+                fi
+              fi
+            done <<< "$EXISTING_TAGS"
 
-          echo "Tag $NEW_TAG created and pushed successfully" 
+            # Generate new revision number and tag
+            NEW_REVISION=$((MAX_REVISION + 1))
+            NEW_TAG="$BASE_VERSION-r$NEW_REVISION"
+
+            echo "Attempting to create tag: $NEW_TAG"
+
+            # Try to create and push tag atomically
+            git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+            
+            if git push origin "$NEW_TAG" 2>&1; then
+              echo "Tag $NEW_TAG created and pushed successfully"
+              echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+              exit 0
+            else
+              echo "Failed to push tag $NEW_TAG (likely already exists), retrying..."
+              # Delete local tag before retry
+              git tag -d "$NEW_TAG" 2>/dev/null || true
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              sleep 2  # Brief delay before retry
+            fi
+          done
+          
+          echo "::error::Failed to create tag after $MAX_RETRIES attempts due to race condition"
+          exit 1
           
       - name: Set KSU Version and Release Name
         if: ${{ steps.release_check.outcome == 'success' }}
@@ -559,12 +570,12 @@ jobs:
           prerelease: true
           release_name: ${{ env.RELEASE_NAME }}
           body: ${{ env.FULL_RELEASE_NOTES }}
-          token: ${{ secrets.MY_GITHUB_TOKEN }}
+          token: ${{ secrets.MY_GKI_TOKEN }}
           
       - name: Upload Release Assets
         if: ${{ steps.release_check.outcome == 'success' }}
         env:
-          GH_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.MY_GKI_TOKEN }}
         run: |
           echo "Uploading release assets..."
           
@@ -581,16 +592,3 @@ jobs:
         run: |
           echo "Uploaded assets:"
           gh release view "${{ env.NEW_TAG }}" --json assets -q '.assets[].name'
-
-      - name: send telegram message on push
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
-        run: |
-            curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-            -d "chat_id=$TELEGRAM_CHAT_ID" \
-            -d "message_thread_id=$TELEGRAM_MESSAGE_THREAD_ID" \
-            -d "text=Latest release: 
-            https://github.com/ShirkNeko/GKI_KernelSU_SUSFS/releases/tag/${{ env.NEW_TAG }}
-            ${{ env.RELEASE_NOTES }}"    
