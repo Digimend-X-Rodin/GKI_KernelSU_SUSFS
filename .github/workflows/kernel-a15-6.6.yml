@@ -23,26 +23,25 @@ on:
         type: string
         default: ""
       use_zram:
-        description: '是否开启增加更多ZRAM算法?'
+        description: 'Enable additional ZRAM algorithms?'
         required: true
         type: boolean
         default: true
       use_kpm:
-        description: '是否开启KPM功能?'
+        description: 'Do you want to enable the KPM function?'
         required: false
         type: boolean
         default: false
       supp_op:
-        description: '是否开启一加8E处理器机型支持?(非该机型无须勾)'
+        description: 'Enable support for OnePlus 8E processor models'
         required: false
         type: boolean
         default: false
       BBG:
-        description: '是否启用内核层面阻止对关键分区/设备节点的非法写入(LSM)？'
+        description: 'Enable kernel-level blocking of illegal writes to critical partitions/device nodes (LSM)?'
         required: true
         type: boolean
         default: false
-
 
 jobs:
   build-kernel-a15-6-6-kernelsu-susfs:
