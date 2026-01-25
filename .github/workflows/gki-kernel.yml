@@ -539,6 +539,11 @@ jobs:
           # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
+      - name: Fix WiFi and Bluetooth on Xiaomi 6.6 GKI devices
+        if: ${{ ( inputs.kernel_version == '6.6' ) }}
+        run: |
+          echo "device_find_any_child" >> ./common/android/abi_gki_aarch64_xiaomi
+
       - name: Configure kernel name
         run: |
           echo "Changing to configuration directory: $CONFIG..."
